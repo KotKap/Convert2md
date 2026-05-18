@@ -7,6 +7,7 @@ Get Convert2MD up and running in 5 minutes!
 ### Prerequisites
 - Python 3.10 or higher
 - Pandoc (for DOCX support)
+- **Inkscape** or **ImageMagick** (required separately for DOCX vector image conversion, e.g. EMF/WMF to PNG)
 
 ### macOS Setup
 ```bash
