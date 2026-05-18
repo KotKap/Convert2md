@@ -355,6 +355,22 @@ convert2md.app/
 2. **py2app**: macOS-specific packaging
 3. **DMG Installer**: Professional distribution
 
+**Running a macOS app bundle from Terminal**
+
+This works for both Intel and Apple Silicon bundles.
+
+If you have a bundled app such as `dist/Convert2MD.app` or `dist/Convert2MDs.app`, run it with:
+
+```bash
+open dist/Convert2MDs.app --args convert '/path/to/document.docx'
+```
+
+Or launch the internal executable directly:
+
+```bash
+./run-macos-app.sh dist/Convert2MDs.app convert '/path/to/document.docx'
+```
+
 #### 4. Performance Optimization
 
 **Concurrency Architecture**
