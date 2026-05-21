@@ -109,6 +109,66 @@ MACOSX_DEPLOYMENT_TARGET=11.7 python -m PyInstaller --onedir --windowed --target
 
 Если при этом появляется `IncompatibleBinaryArchError`, значит один из модулей всё ещё одноплатформенный.
 
----
+## 10. Подпись и нотариация macOS `.app`
 
-Если потребуется, могу также добавить в этот файл инструкцию по подписи и нотариации macOS `.app`.
+Для распространения `.app` через Gatekeeper и удобного запуска на чужих машинах рекомендуется подписать и нотариализовать пакет.
+
+### 10.1. Подготовка
+
+Вам потребуется:
+
+- действующий Apple Developer ID Application сертификат;
+- учётная запись Apple Developer;
+- `xcode-select --install` для наличия инструментов командной строки.
+
+### 10.2. Подпись приложения
+
+1. Убедитесь, что `.app` собран.
+2. Выполните подпись:
+
+```bash
+codesign --deep --force --verbose --options runtime --sign "Developer ID Application: YOUR NAME (TEAMID)" dist/Convert2MDi.app
+```
+
+3. Проверьте подпись:
+
+```bash
+codesign --verify --deep --strict --verbose=2 dist/Convert2MDi.app
+spctl --assess --type execute --verbose dist/Convert2MDi.app
+```
+
+### 10.3. Нотариация приложения
+
+1. Создайте ZIP-архив для отправки в Apple:
+
+```bash
+cd dist
+zip -r Convert2MDi.zip Convert2MDi.app
+```
+
+2. Отправьте на нотариацию:
+
+```bash
+xcrun altool --notarize-app --primary-bundle-id "com.yourcompany.convert2mdi" --username "apple-id@example.com" --password "APP_SPECIFIC_PASSWORD" --file Convert2MDi.zip
+```
+
+3. Проверьте статус:
+
+```bash
+xcrun altool --notarization-info <REQUEST_UUID> --username "apple-id@example.com" --password "APP_SPECIFIC_PASSWORD"
+```
+
+4. После успешной нотариации отметьте ZIP как stapled и распакуйте его или используйте stapler:
+
+```bash
+xcrun stapler staple Convert2MDi.app
+xcrun stapler validate Convert2MDi.app
+```
+
+### 10.4. Уточнения
+
+- `APP_SPECIFIC_PASSWORD` создаётся в Apple ID как пароль для приложений.
+- `YOUR NAME (TEAMID)` замените на точное имя сертификата.
+- `com.yourcompany.convert2mdi` замените на настоящий bundle identifier.
+
+---
