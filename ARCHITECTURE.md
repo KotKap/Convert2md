@@ -80,13 +80,22 @@ class ConverterStrategy(ABC):
 - Uses Pandoc via pypandoc for conversion
 - Extracts images to `picture_<filename>/` directory
 - Flattens nested Pandoc `media/` output into `picture_<filename>/`
-- Converts embedded vector graphics (EMF/WMF) to PNG using Inkscape first, then ImageMagick
+- Converts embedded vector graphics (EMF/WMF) to PNG with safety mechanisms
 - Updates image paths to be relative
 - Handles complex formatting
+
+**Vector Graphics Safety** (See [VECTOR_SAFETY.md](VECTOR_SAFETY.md)):
+- EMF file validation before Inkscape processing (magic number check)
+- 30-second timeout on all external tool invocations
+- Automatic fallback from Inkscape to ImageMagick on failure/timeout
+- Graceful degradation: preserves original files if conversion fails
 
 **Key Methods**:
 - `convert()`: Main conversion method
 - `_convert_with_pandoc()`: Pandoc integration
+- `_validate_emf_file()`: Check EMF structure before processing
+- `_convert_media_vectors()`: Safe conversion pipeline (Inkscape → ImageMagick)
+- `_convert_with_imagemagick()`: ImageMagick fallback converter
 - `_update_image_paths()`: Ensure relative paths
 - `_filter_noise()`: Remove artifacts
 

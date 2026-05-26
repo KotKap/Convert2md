@@ -23,6 +23,12 @@
   - Design patterns and extension points
   - Testing architecture and performance considerations
 
+- **VECTOR_SAFETY.md** (NEW, 200+ lines)
+  - EMF/WMF file safety mechanisms
+  - Process timeout and validation strategies
+  - Fallback conversion pipeline details
+  - Troubleshooting malformed vector files
+
 - **CONTRIBUTING.md** (300+ lines)
   - Developer setup and workflow
   - Code style guidelines and testing requirements

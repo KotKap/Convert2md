@@ -7,7 +7,10 @@ from typing import Tuple
 import re
 import shutil
 import subprocess
+import logging
 from .converter_strategy import ConverterStrategy, ConversionMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class DOCXConverter(ConverterStrategy):
@@ -246,6 +249,36 @@ class DOCXConverter(ConverterStrategy):
         
         return markdown
 
+    def _validate_emf_file(self, file_path: Path) -> bool:
+        """
+        Validate EMF file structure by checking magic number.
+        
+        EMF files start with magic number 0x01000900 (standard EMF header).
+        This is a quick structural check that doesn't guarantee file validity,
+        but catches obviously corrupted headers.
+        
+        Args:
+            file_path: Path to EMF file
+            
+        Returns:
+            True if file appears to be valid EMF, False otherwise
+        """
+        if not file_path.exists() or not file_path.is_file():
+            return False
+        
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(4)
+                if len(header) < 4:
+                    return False
+                # EMF files start with magic number 0x01000900
+                # (little-endian: 0x01, 0x00, 0x09, 0x00)
+                if header == b'\x01\x00\x09\x00':
+                    return True
+                return False
+        except Exception:
+            return False
+
     def _convert_media_vectors(self, picture_dir: Path) -> None:
         """
         Convert vector media files (EMF, WMF) inside the pandoc media
@@ -253,6 +286,11 @@ class DOCXConverter(ConverterStrategy):
 
         Populates `self._media_converted_map` mapping original filenames
         to converted filenames (e.g., image4.emf -> image4.png).
+        
+        Strategy:
+        1. Validate EMF file structure
+        2. Try Inkscape with timeout (safer fallback on timeout)
+        3. Fall back to ImageMagick if Inkscape fails
         """
         media_dir = picture_dir / 'media'
         if not media_dir.exists() or not media_dir.is_dir():
@@ -267,9 +305,17 @@ class DOCXConverter(ConverterStrategy):
                 continue
 
             dst = src.with_suffix('.png')
+            
+            # Validate EMF file before attempting conversion
+            if src.suffix.lower() == '.emf':
+                if not self._validate_emf_file(src):
+                    logger.warning(f"Invalid EMF file structure: {src.name}, skipping Inkscape")
+                    # Try ImageMagick directly
+                    if self._convert_with_imagemagick(src, dst):
+                        converted_map[src.name] = dst.name
+                    continue
 
-            # Try Inkscape first for better EMF/WMF rendering, then ImageMagick
-            tried = False
+            # Try Inkscape with timeout for better EMF/WMF rendering
             try:
                 subprocess.run([
                     'inkscape',
@@ -277,32 +323,57 @@ class DOCXConverter(ConverterStrategy):
                     '--export-type=png',
                     '--export-filename',
                     str(dst),
-                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
                 converted_map[src.name] = dst.name
-                tried = True
-            except Exception:
-                pass
-
-            if tried:
+                logger.debug(f"Converted {src.name} with Inkscape")
                 continue
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Inkscape timeout processing {src.name}, trying ImageMagick")
+                # Clean up partial output
+                if dst.exists():
+                    dst.unlink()
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                logger.debug(f"Inkscape failed for {src.name}: {e}")
+            except Exception as e:
+                logger.warning(f"Unexpected error with Inkscape for {src.name}: {e}")
 
             # Fallback: ImageMagick `magick` or `convert`
-            for cmd in (('magick', str(src), str(dst)), ('convert', str(src), str(dst))):
-                try:
-                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    converted_map[src.name] = dst.name
-                    tried = True
-                    break
-                except Exception:
-                    continue
-
-            if tried:
-                continue
-
-            # If no tool succeeded, skip conversion for this file
+            if self._convert_with_imagemagick(src, dst):
+                converted_map[src.name] = dst.name
+                logger.debug(f"Converted {src.name} with ImageMagick")
+            else:
+                logger.warning(f"Failed to convert {src.name}, keeping original format")
 
         if converted_map:
             self._media_converted_map = converted_map
+
+    def _convert_with_imagemagick(self, src: Path, dst: Path) -> bool:
+        """
+        Try to convert file using ImageMagick (magick or convert).
+        
+        Args:
+            src: Source file path
+            dst: Destination PNG file path
+            
+        Returns:
+            True if conversion succeeded, False otherwise
+        """
+        for cmd in ('magick', 'convert'):
+            try:
+                subprocess.run(
+                    [cmd, str(src), str(dst)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30
+                )
+                return True
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                continue
+            except Exception:
+                continue
+        
+        return False
 
     def _flatten_media_dir(self, picture_dir: Path) -> None:
         """

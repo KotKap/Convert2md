@@ -228,6 +228,7 @@ Future releases may support:
 2. **Embedded Fonts**: Special fonts may not be preserved in conversion
 3. **Hyperlinks**: Some hyperlink information may be lost during conversion
 4. **Comments**: Document comments and annotations are not preserved
+5. **Corrupted EMF/WMF Files**: Malformed vector image files are detected and skipped with fallback to original format
 
 ## Troubleshooting
 
@@ -261,6 +262,12 @@ brew install imagemagick
 # Ubuntu/Debian
 sudo apt-get install inkscape imagemagick
 ```
+
+**Safety Features:**
+- **EMF File Validation**: Checks file structure before processing to prevent crashes
+- **30-second Timeout**: Prevents Inkscape from hanging indefinitely
+- **Automatic Fallback**: Uses ImageMagick if Inkscape fails or times out
+- **Graceful Degradation**: Preserves original EMF/WMF files if conversion fails
 
 If vector images remain as `.emf`/`.wmf`, the converter still preserves them in the `picture_*` directory, but Markdown may not render them in all viewers.
 
@@ -526,6 +533,13 @@ For issues, questions, or suggestions:
 - Comprehensive test suite
 - Full documentation
 - Roadmap for Stage 2 GUI development
+
+### Version 1.0.1 (Safety & Stability)
+- **EMF/WMF Validation**: Added file structure validation before Inkscape processing
+- **Process Timeout**: 30-second timeout on image conversion tools to prevent hangs
+- **Smart Fallback**: Automatic fallback from Inkscape to ImageMagick on failure
+- **Improved Logging**: Debug logging for conversion pipeline
+- **Graceful Degradation**: Preserves original files if conversion fails
 
 ---
 
