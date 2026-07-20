@@ -32,11 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Format-specific functionality
 - Complete documentation:
   - README.md with usage examples and roadmap
-  - TEST_CHECKLIST.md with manual and automated tests
+  - Automated tests for core scenarios
   - CONTRIBUTING.md with development guidelines
   - Docstrings for all public APIs
 - Project configuration:
-  - setup.py for package distribution
   - requirements.txt with pinned dependencies
   - pytest.ini for test discovery
   - .gitignore for version control

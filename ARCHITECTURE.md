@@ -21,17 +21,14 @@ Convert2MD/
 │   └── test_convert2md.py        # All tests
 ├── test_samples/                 # Sample documents (user-added)
 ├── convert2md.py                 # Entry point
-├── setup.py                      # Package configuration
 ├── requirements.txt              # Production dependencies
 ├── requirements-dev.txt          # Development dependencies
 ├── pytest.ini                    # Pytest configuration
-├── Makefile                      # Development tasks
 ├── .gitignore                    # Git ignore rules
 ├── .mypy.ini                     # Type checking config
 ├── README.md                     # Project overview
 ├── QUICKSTART.md                 # Getting started
 ├── CONTRIBUTING.md               # Developer guide
-├── TEST_CHECKLIST.md             # Test scenarios
 ├── CHANGELOG.md                  # Version history
 └── ARCHITECTURE.md              # This file
 ```
@@ -401,29 +398,6 @@ except Exception as e:
 5. **Event System**: Emit events during conversion
 6. **Database**: Track conversion history
 
-## Deployment
-
-### Package Distribution
-```bash
-# Build distribution
-python setup.py sdist bdist_wheel
-
-# Upload to PyPI
-twine upload dist/*
-
-# Install from PyPI
-pip install convert2md
-```
-
-### macOS App (Stage 2)
-```bash
-# Create app bundle
-pyinstaller --onedir convert2md.spec
-
-# Create DMG installer
-create-dmg Convert2MD.app Convert2MD.dmg
-```
-
 ## Maintenance
 
 ### Code Quality
@@ -448,4 +422,4 @@ create-dmg Convert2MD.app Convert2MD.dmg
 **See also**:
 - [README.md](README.md) - Project overview
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development guide
-- [TEST_CHECKLIST.md](TEST_CHECKLIST.md) - Test scenarios
+- `tests/` - Automated test scenarios

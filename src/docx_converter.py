@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import logging
+import struct
 from .converter_strategy import ConverterStrategy, ConversionMetadata
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class DOCXConverter(ConverterStrategy):
         
         Args:
             input_path: Path to the DOCX file
-            
+
         Returns:
             Tuple of (markdown_content, metadata)
         """
@@ -55,7 +56,10 @@ class DOCXConverter(ConverterStrategy):
             
             # Ensure LaTeX formulas are properly formatted
             markdown_content = self._ensure_latex_format(markdown_content)
-            
+
+            # Collapse single newlines inside paragraphs
+            markdown_content = self._collapse_paragraph_newlines(markdown_content)
+
             # Include nested media files in reported images
             metadata.images = list(picture_dir.rglob('*')) if picture_dir.exists() else []
             
@@ -92,18 +96,18 @@ class DOCXConverter(ConverterStrategy):
             # Convert using pandoc via pypandoc
             markdown = pypandoc.convert_file(
                 str(input_path),
-                'md',
+                'gfm',
                 outputfile=None,
                 extra_args=[
-                    f'--extract-media={picture_dir}'
+                    f'--extract-media={picture_dir}',
+                    '--wrap=none',
                 ]
             )
             # Convert vector media (EMF/WMF) to PNG for Markdown compatibility
             try:
                 self._convert_media_vectors(picture_dir)
-            except Exception:
-                # If conversion tools are not available, continue with extracted files as-is
-                pass
+            except Exception as vector_error:
+                logger.warning("Vector media conversion failed: %s", vector_error)
             # If pandoc created a nested 'media' directory, flatten it into picture_dir
             picture_dirname = f"picture_{stem}"
             try:
@@ -253,9 +257,8 @@ class DOCXConverter(ConverterStrategy):
         """
         Validate EMF file structure by checking magic number.
         
-        EMF files start with magic number 0x01000900 (standard EMF header).
-        This is a quick structural check that doesn't guarantee file validity,
-        but catches obviously corrupted headers.
+        Validate the EMR_HEADER record and the `` EMF`` signature. The first
+        DWORD is the record type (1); the signature is stored at offset 40.
         
         Args:
             file_path: Path to EMF file
@@ -267,15 +270,20 @@ class DOCXConverter(ConverterStrategy):
             return False
         
         try:
+            file_size = file_path.stat().st_size
             with open(file_path, 'rb') as f:
-                header = f.read(4)
-                if len(header) < 4:
+                header = f.read(88)
+                if len(header) < 88:
                     return False
-                # EMF files start with magic number 0x01000900
-                # (little-endian: 0x01, 0x00, 0x09, 0x00)
-                if header == b'\x01\x00\x09\x00':
-                    return True
-                return False
+                record_type, header_size = struct.unpack_from('<II', header, 0)
+                signature = header[40:44]
+                declared_size = struct.unpack_from('<I', header, 48)[0]
+                return (
+                    record_type == 1
+                    and header_size >= 88
+                    and signature == b' EMF'
+                    and 88 <= declared_size <= file_size
+                )
         except Exception:
             return False
 
@@ -321,12 +329,18 @@ class DOCXConverter(ConverterStrategy):
                     'inkscape',
                     str(src),
                     '--export-type=png',
+                    '--export-dpi=192',
+                    '--export-background=white',
                     '--export-filename',
                     str(dst),
                 ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-                converted_map[src.name] = dst.name
-                logger.debug(f"Converted {src.name} with Inkscape")
-                continue
+                if self._validate_raster_output(dst):
+                    converted_map[src.name] = dst.name
+                    logger.debug(f"Converted {src.name} with Inkscape")
+                    continue
+                logger.warning("Inkscape produced an invalid image for %s", src.name)
+                if dst.exists():
+                    dst.unlink()
             except subprocess.TimeoutExpired:
                 logger.warning(f"Inkscape timeout processing {src.name}, trying ImageMagick")
                 # Clean up partial output
@@ -367,13 +381,28 @@ class DOCXConverter(ConverterStrategy):
                     stderr=subprocess.DEVNULL,
                     timeout=30
                 )
-                return True
+                if self._validate_raster_output(dst):
+                    return True
+                if dst.exists():
+                    dst.unlink()
             except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
                 continue
             except Exception:
                 continue
         
         return False
+
+    def _validate_raster_output(self, file_path: Path) -> bool:
+        """Check that a converter produced a readable, non-empty raster image."""
+        if not file_path.exists() or file_path.stat().st_size == 0:
+            return False
+        try:
+            from PIL import Image
+            with Image.open(file_path) as image:
+                image.verify()
+                return image.width > 0 and image.height > 0
+        except (ImportError, OSError, ValueError):
+            return False
 
     def _flatten_media_dir(self, picture_dir: Path) -> None:
         """

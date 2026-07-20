@@ -5,6 +5,7 @@ Base converter strategy interface and utility classes.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Tuple
+from .markdown_postprocessor import MarkdownPostProcessor
 
 
 class ConverterStrategy(ABC):
@@ -23,6 +24,14 @@ class ConverterStrategy(ABC):
             metadata contains 'images' - list of extracted image paths
         """
         pass
+
+    def _collapse_paragraph_newlines(self, markdown: str) -> str:
+        """
+        Collapse single newlines inside paragraphs into spaces,
+        preserving paragraph separators (double newlines).
+        Table rows (lines starting with '|') are preserved as-is.
+        """
+        return MarkdownPostProcessor().process(markdown)
 
     @abstractmethod
     def supports(self, file_path: Path) -> bool:

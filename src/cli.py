@@ -4,11 +4,15 @@ CLI interface for document conversion.
 
 from pathlib import Path
 from typing import Optional
+import os
 import typer
 from rich.console import Console
 from rich.progress import Progress
 
 from .converter import DocumentConverter
+from .diagram_converter import DiagramConversionError, GeminiDiagramProvider, ImageMermaidConverter
+from .diagram_models import BatchPlanner, DEFAULT_MODELS
+from .quota import QuotaLedger, RateLimiter
 
 app = typer.Typer(
     name="Convert2MD",
@@ -16,6 +20,17 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+def _quota_ledger() -> QuotaLedger:
+    state_dir = Path(os.getenv("CONVERT2MD_STATE_DIR", Path.home() / ".convert2md"))
+    return QuotaLedger(state_dir / "quota.sqlite3")
+
+
+def _validate_model_name(model_name: str | None) -> None:
+    if model_name and model_name not in {model.name for model in DEFAULT_MODELS}:
+        names = ", ".join(model.name for model in DEFAULT_MODELS)
+        raise typer.BadParameter(f"Unknown model '{model_name}'. Configured models: {names}")
 
 
 @app.command()
@@ -202,6 +217,132 @@ def batch(
     console.print(f"  [green]Successful:[/green] {successful}")
     if failed > 0:
         console.print(f"  [red]Failed:[/red] {failed}")
+
+
+@app.command("models")
+def list_diagram_models() -> None:
+    """Show configured image-to-Mermaid models and locally known daily usage."""
+    ledger = _quota_ledger()
+    for model in DEFAULT_MODELS:
+        used = ledger.requests_today(model.name)
+        console.print(
+            f"{model.name}: {used}/{model.rpd} RPD, {model.rpm} RPM, {model.tpm} TPM"
+        )
+
+
+@app.command("diagram")
+def convert_diagram(
+    input_file: Path = typer.Argument(..., exists=True, dir_okay=False),
+    model_name: Optional[str] = typer.Option(None, "--model", help="Preferred Gemini model"),
+) -> None:
+    """Convert one PNG/JPG diagram to a same-name Markdown file."""
+    _validate_model_name(model_name)
+    ledger = _quota_ledger()
+    planner = BatchPlanner(ledger)
+    excluded_models: set[str] = set()
+    try:
+        converter = ImageMermaidConverter(
+            GeminiDiagramProvider(), ledger, RateLimiter(ledger)
+        )
+    except DiagramConversionError as error:
+        console.print(f"[red]Cannot start ({error.code}):[/red] {error}")
+        raise typer.Exit(code=1)
+
+    while True:
+        plan = planner.plan(
+            [input_file], preferred_model=model_name, excluded_models=excluded_models
+        )
+        if not plan.assignments:
+            console.print("[red]No configured model has remaining daily capacity.[/red]")
+            raise typer.Exit(code=1)
+        item = plan.assignments[0]
+        try:
+            output = converter.convert(item.path, item.model)
+            console.print(f"[green]✓[/green] {output} ({item.model.name})")
+            return
+        except DiagramConversionError as error:
+            if error.code in {"quota", "model_unavailable"}:
+                excluded_models.add(item.model.name)
+                console.print(f"[yellow]{item.model.name} unavailable; trying another model.[/yellow]")
+                continue
+            console.print(f"[red]Diagram conversion failed ({error.code}):[/red] {error}")
+            raise typer.Exit(code=1)
+
+
+@app.command("diagrams")
+def convert_diagrams(
+    input_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    recursive: bool = typer.Option(False, "--recursive", "-r"),
+    model_name: Optional[str] = typer.Option(None, "--model", help="Preferred Gemini model"),
+    plan_only: bool = typer.Option(False, "--plan-only", help="Show allocation without API calls"),
+) -> None:
+    """Batch-convert PNG/JPG diagrams and respect shared RPM/TPM/RPD limits."""
+    _validate_model_name(model_name)
+    iterator = input_dir.rglob("*") if recursive else input_dir.glob("*")
+    files = sorted(
+        path for path in iterator
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+    )
+    if not files:
+        console.print("[yellow]No PNG/JPG images found.[/yellow]")
+        return
+
+    ledger = _quota_ledger()
+    planner = BatchPlanner(ledger)
+    plan = planner.plan(files, preferred_model=model_name)
+    counts: dict[str, int] = {}
+    for item in plan.assignments:
+        counts[item.model.name] = counts.get(item.model.name, 0) + 1
+    console.print(f"[cyan]Images:[/cyan] {len(files)}")
+    for name, count in counts.items():
+        console.print(f"  {name}: {count}")
+    console.print(f"[cyan]Estimated minimum time:[/cyan] {plan.estimated_seconds:.0f}s")
+    if plan.unassigned:
+        console.print(f"[yellow]No daily capacity for {len(plan.unassigned)} image(s).[/yellow]")
+    if plan_only:
+        return
+
+    try:
+        converter = ImageMermaidConverter(
+            GeminiDiagramProvider(), ledger, RateLimiter(ledger)
+        )
+    except DiagramConversionError as error:
+        console.print(f"[red]Cannot start ({error.code}):[/red] {error}")
+        raise typer.Exit(code=1)
+
+    successful = 0
+    failed = 0
+    deferred = len(plan.unassigned)
+    excluded_models: set[str] = set()
+    queue = list(plan.assignments)
+    while queue:
+        item = queue.pop(0)
+        try:
+            converter.convert(item.path, item.model)
+            successful += 1
+            console.print(f"[green]✓[/green] {item.path.name} ({item.model.name})")
+        except DiagramConversionError as error:
+            if error.code in {"quota", "model_unavailable"}:
+                excluded_models.add(item.model.name)
+                remaining_paths = [item.path, *(entry.path for entry in queue)]
+                replacement = planner.plan(
+                    remaining_paths,
+                    preferred_model=model_name,
+                    excluded_models=excluded_models,
+                )
+                queue = list(replacement.assignments)
+                deferred += len(replacement.unassigned)
+                console.print(
+                    f"[yellow]{item.model.name} unavailable; replanned "
+                    f"{len(queue)} remaining image(s).[/yellow]"
+                )
+                continue
+            failed += 1
+            console.print(f"[red]✗[/red] {item.path.name} ({error.code}): {error}")
+    console.print(
+        f"[cyan]Complete:[/cyan] {successful} successful, {failed} failed, "
+        f"{deferred} deferred"
+    )
 
 
 def main():

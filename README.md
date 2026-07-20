@@ -63,6 +63,34 @@ Convert2MD/
 
 ## Usage
 
+### Convert diagrams to Mermaid
+
+Set `GEMINI_API_KEY`, then convert one PNG/JPG image. The `.md` file is
+written beside the source image with the same base name:
+
+```bash
+python convert2md.py diagram ./diagram.png
+```
+
+Plan a batch without making API requests:
+
+```bash
+python convert2md.py diagrams ./Pict --model gemini-2.5-flash --plan-only
+```
+
+Run the batch or inspect locally recorded quota usage:
+
+```bash
+python convert2md.py diagrams ./Pict
+python convert2md.py models
+```
+
+The batch planner shares quota history between commands, observes RPM/TPM/RPD,
+and moves remaining images to another configured model when a model is exhausted
+or unavailable. By default its SQLite state is stored in `~/.convert2md`; set
+`CONVERT2MD_STATE_DIR` to use another directory. Usage performed outside this
+application is not visible until the provider returns a quota error.
+
 ### Convert Single File
 
 Convert a PDF document to Markdown:
@@ -361,22 +389,6 @@ convert2md.app/
 1. **PyInstaller**: Direct .app generation
 2. **py2app**: macOS-specific packaging
 3. **DMG Installer**: Professional distribution
-
-**Running a macOS app bundle from Terminal**
-
-This works for both Intel and Apple Silicon bundles.
-
-If you have a bundled app such as `dist/Convert2MD.app` or `dist/Convert2MDs.app`, run it with:
-
-```bash
-open dist/Convert2MDs.app --args convert '/path/to/document.docx'
-```
-
-Or launch the internal executable directly:
-
-```bash
-./run-macos-app.sh dist/Convert2MDs.app convert '/path/to/document.docx'
-```
 
 #### 4. Performance Optimization
 

@@ -14,9 +14,12 @@ from pathlib import Path
 import tempfile
 import shutil
 import re
+import struct
+from types import SimpleNamespace
 from src.converter import DocumentConverter
 from src.pdf_converter import PDFConverter
 from src.docx_converter import DOCXConverter
+from src.markdown_postprocessor import MarkdownPostProcessor
 
 
 @pytest.fixture
@@ -140,6 +143,45 @@ Footer - Page 2
         assert True, "Multi-column layout should be converted to sequential text"
 
 
+class TestMarkdownPostProcessor:
+    def setup_method(self):
+        self.processor = MarkdownPostProcessor()
+
+    def test_collapses_only_plain_paragraph_lines(self):
+        source = "# Heading\n\nA paragraph that was\nwrapped by the converter."
+        assert self.processor.process(source) == (
+            "# Heading\n\nA paragraph that was wrapped by the converter."
+        )
+
+    def test_preserves_lists_tables_and_mermaid(self):
+        source = """- first
+- second
+
+| A | B |
+| --- | --- |
+| 1 | 2 |
+
+```mermaid
+flowchart TD
+    A --> B
+```"""
+        assert self.processor.process(source) == source
+
+    def test_removes_multiline_image_dimensions(self):
+        source = '![](picture/image.png){width="1in"\n  height="2in"}'
+        assert self.processor.process(source) == '![](picture/image.png)'
+
+    def test_converts_underlines(self):
+        assert self.processor.process('[incidents]{.underline}') == '<u>incidents</u>'
+
+    @pytest.mark.parametrize('separator', ['<!-- -->', '**\\**'])
+    def test_removes_page_separators(self, separator):
+        assert self.processor.process(f'Before\n\n{separator}\n\nAfter') == 'Before\n\nAfter'
+
+    def test_does_not_remove_image_placeholder(self):
+        assert self.processor.process('<!-- image -->') == '<!-- image -->'
+
+
 class TestResourceHandling:
     """Tests for resource handling (large files, images)."""
     
@@ -187,6 +229,31 @@ class TestResourceHandling:
         # For now, we validate the capability exists
         assert True, "Large file handling should be stable"
 
+    def test_docling_picture_bbox_is_cropped_without_full_page(self, temp_dir):
+        import fitz
+        from docling_core.types.doc import BoundingBox
+
+        pdf_path = temp_dir / "diagram.pdf"
+        pdf = fitz.open()
+        page = pdf.new_page(width=600, height=800)
+        page.draw_rect(fitz.Rect(100, 200, 300, 400))
+        pdf.save(pdf_path)
+        pdf.close()
+
+        document = SimpleNamespace(
+            pictures=[SimpleNamespace(prov=[SimpleNamespace(
+                page_no=1,
+                bbox=BoundingBox(l=100, t=200, r=300, b=400),
+            )])]
+        )
+        images = PDFConverter()._extract_docling_picture_regions(
+            document, pdf_path, temp_dir
+        )
+
+        assert len(images) == 1
+        assert images[0].bbox.width < 250
+        assert images[0].bbox.height < 250
+
 
 class TestPDFConverter:
     """Tests specific to PDF conversion."""
@@ -219,6 +286,22 @@ class TestDOCXConverter:
         """Test error handling for missing DOCX files."""
         with pytest.raises(FileNotFoundError):
             converter.convert("/nonexistent/file.docx")
+
+    def test_validates_real_emf_header_layout(self, temp_dir):
+        emf_path = temp_dir / "valid.emf"
+        header = bytearray(88)
+        struct.pack_into('<II', header, 0, 1, 88)
+        header[40:44] = b' EMF'
+        struct.pack_into('<I', header, 48, 88)
+        emf_path.write_bytes(header)
+
+        assert DOCXConverter()._validate_emf_file(emf_path)
+
+    def test_rejects_old_incorrect_emf_magic(self, temp_dir):
+        emf_path = temp_dir / "invalid.emf"
+        emf_path.write_bytes(b'\x01\x00\x09\x00' + bytes(84))
+
+        assert not DOCXConverter()._validate_emf_file(emf_path)
 
     def test_pandoc_auto_download_when_missing(self, temp_dir, monkeypatch):
         """Test that missing Pandoc triggers an automatic download attempt."""

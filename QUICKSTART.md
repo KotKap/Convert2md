@@ -207,7 +207,7 @@ pytest tests/test_convert2md.py::TestStructuralRequirements -v
 ## Next Steps
 
 1. **Read Full Documentation**: See [README.md](README.md)
-2. **Check Test Examples**: See [TEST_CHECKLIST.md](TEST_CHECKLIST.md)
+2. **Check Test Examples**: See the `tests/` directory
 3. **Contribute**: See [CONTRIBUTING.md](CONTRIBUTING.md)
 4. **Report Issues**: Use GitHub Issues
 
@@ -240,7 +240,7 @@ ls picture_report/ | wc -l
 ## Support
 
 - **Stuck?** Read [README.md](README.md) troubleshooting section
-- **Want to test?** Check [TEST_CHECKLIST.md](TEST_CHECKLIST.md)
+- **Want to test?** Run `pytest`
 - **Want to contribute?** See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---

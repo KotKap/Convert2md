@@ -1,5 +1,5 @@
 # Core dependencies
-# Python 3.10+ required (see setup.py)
+# Python 3.10+ required
 
 # PDF processing
 docling>=1.0.0
@@ -20,3 +20,8 @@ pytest-cov>=4.1.0
 
 # Type checking
 mypy>=1.5.0
+
+# GoogleAI
+google-genai
+pydantic
+pillow

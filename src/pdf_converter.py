@@ -50,7 +50,7 @@ class PDFConverter(ConverterStrategy):
         
         Args:
             input_path: Path to the PDF file
-            
+
         Returns:
             Tuple of (markdown_content, metadata)
         """
@@ -83,9 +83,15 @@ class PDFConverter(ConverterStrategy):
             # Get markdown content and extract images
             markdown_content = document.export_to_markdown()
             extracted_images = self._extract_images_from_pdf(input_path, picture_dir)
-            
-            # If very few images, use page rasterization fallback
-            if len(extracted_images) < 5:
+            picture_regions = self._extract_docling_picture_regions(
+                document, input_path, picture_dir
+            )
+
+            # Docling picture regions exclude adjacent tables and captions and
+            # therefore take precedence over page-wide drawing heuristics.
+            if picture_regions:
+                extracted_images = picture_regions
+            elif len(extracted_images) < 5:
                 fallback_images = self._extract_page_fallback_images(input_path, picture_dir)
                 extracted_images.extend(fallback_images)
 
@@ -123,7 +129,10 @@ class PDFConverter(ConverterStrategy):
             
             # Ensure LaTeX formulas are properly formatted
             markdown_content = self._ensure_latex_format(markdown_content)
-            
+
+            # Collapse single newlines inside paragraphs
+            markdown_content = self._collapse_paragraph_newlines(markdown_content)
+
             metadata.images = list(picture_dir.glob('*')) if picture_dir.exists() else []
             
             return markdown_content, metadata.to_dict()
@@ -158,7 +167,6 @@ class PDFConverter(ConverterStrategy):
         """
         picture_dirname = f"picture_{stem}"
 
-        used_image_names = set()
         for match in re.finditer(r'!\[[^\]]*\]\(([^)]+)\)', markdown):
             used_image_names.add(Path(match.group(1)).name)
         for match in re.finditer(r'<img[^>]*?src="([^"]+)"', markdown):
@@ -341,6 +349,55 @@ class PDFConverter(ConverterStrategy):
         except Exception:
             pass
 
+        return extracted
+
+    def _extract_docling_picture_regions(
+        self, document, input_path: Path, picture_dir: Path
+    ) -> list[ExtractedImage]:
+        """Rasterize Docling ``PictureItem`` regions without nearby captions/tables."""
+        extracted: list[ExtractedImage] = []
+        if fitz is None:
+            return extracted
+        pictures = getattr(document, 'pictures', None) or []
+        if not pictures:
+            return extracted
+
+        try:
+            pdf = fitz.open(str(input_path))
+            for picture_index, picture in enumerate(pictures, start=1):
+                provenance = getattr(picture, 'prov', None) or []
+                if not provenance:
+                    continue
+                item = provenance[0]
+                page_number = int(item.page_no)
+                if not 1 <= page_number <= len(pdf):
+                    continue
+                page = pdf[page_number - 1]
+                bbox = item.bbox.to_top_left_origin(page.rect.height)
+                padding = 3
+                clip = fitz.Rect(
+                    max(page.rect.x0, bbox.l - padding),
+                    max(page.rect.y0, bbox.t - padding),
+                    min(page.rect.x1, bbox.r + padding),
+                    min(page.rect.y1, bbox.b + padding),
+                )
+                if clip.is_empty or clip.width < 20 or clip.height < 20:
+                    continue
+                pix = page.get_pixmap(clip=clip, alpha=False, dpi=192)
+                output_path = picture_dir / f"figure_{picture_index:03d}.png"
+                pix.save(str(output_path))
+                extracted.append(
+                    ExtractedImage(
+                        path=output_path,
+                        page_number=page_number,
+                        bbox=clip,
+                        digest=b'docling-picture',
+                        width=pix.width,
+                        height=pix.height,
+                    )
+                )
+        except Exception:
+            return extracted
         return extracted
 
     def _filter_header_footer_images(

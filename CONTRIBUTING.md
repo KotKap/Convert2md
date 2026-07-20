@@ -24,7 +24,7 @@ cd convert2md
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 ```
 
 ### 3. Create a Feature Branch
@@ -84,7 +84,7 @@ def test_new_feature():
 ### 3. Update Documentation
 - Update README.md if user-facing
 - Add docstrings to public API
-- Update TEST_CHECKLIST.md if applicable
+- Update or add automated tests when applicable
 
 ### 4. Run Tests
 ```bash
@@ -275,7 +275,7 @@ Fixes #123
 3. **Update Documentation**: If needed
    - README.md
    - Docstrings
-   - TEST_CHECKLIST.md
+   - Automated tests
 
 4. **Create Pull Request**
    - Clear title and description
@@ -329,7 +329,7 @@ Include:
 
 For maintainers:
 
-1. Update version in `setup.py` and `__init__.py`
+1. Update the version in `src/config.py`
 2. Update CHANGELOG
 3. Run full test suite
 4. Create git tag: `git tag v1.0.0`
