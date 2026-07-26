@@ -1,9 +1,58 @@
-# Changelog
+# Convert2MD changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- UI-independent model-management module with providers, models, capabilities,
+  technical limits, prices, budgets and usage records.
+- SQLite migrations and repositories.
+- YAML/JSON catalog import and CSV/JSON/JSONL historical usage import.
+- Preflight validation and centralized cost calculation with immutable price
+  snapshots.
+- CLI commands for model inspection, configuration import, usage reporting,
+  manual usage registration and usage import.
+- Local graphical web interface covering conversion, catalog administration,
+  accounting and imports.
+- Versioned FastAPI `/api/v1/` adapter.
+- ZIP downloads containing Markdown and extracted document resources.
+- Documentation directory and centralized README navigation.
+
+### Changed
+
+- DOCX EMF/WMF conversion now prefers headless LibreOffice Draw, followed by
+  Inkscape and ImageMagick.
+- Diagram conversion performs preflight validation before provider calls and
+  records actual usage afterward.
+- Diagram conversion now defaults to `gemini-3.1-flash-lite`; the catalog uses
+  exact current Gemini API identifiers and hides unsuitable models from the
+  conversion selector.
+
+### Fixed
+
+- Prevented Inkscape 1.4.4 EMF importer crashes for Office-generated graphics
+  by routing them through LibreOffice first.
+- Imported models are now visible in the CLI and web catalog.
+- Historical usage can be entered manually or imported in bulk.
+- Google `NOT_FOUND`, invalid-request, quota and transient service errors are
+  classified correctly, so permanent model failures are no longer retried.
+- Mermaid validation accepts the diagram families supported by current Mermaid
+  releases and retains a safe response excerpt for diagnostics.
+- Flowchart responses that begin with a top-level `subgraph` are normalized by
+  restoring the omitted Mermaid root directive.
+- Removed the deprecated sampling parameter from Gemini requests for
+  compatibility with current 3.5/3.6 models.
+- The graphical interface now resolves the REST API from the host used to open
+  the page, accepts local UI ports, loads `.env` for the backend, and reports a
+  concrete API address instead of the browser's generic `Failed to fetch`.
+- Nullable cached-input and reasoning counters returned by Gemini are
+  normalized to zero before usage is written, preventing a successful
+  conversion from being lost to a SQLite constraint error.
 
 ## [1.0.0] - 2026-05-13
 
@@ -87,30 +136,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coverage reporting with pytest-cov
 - Manual test checklist with verification steps
 
-### Future Roadmap (Stage 2)
-- PySide6-based GUI application
-- macOS app bundle support
-- Dark mode integration
-- Drag-and-drop interface
-- Real-time preview panel
-- Metal acceleration for M1/M2/M3 chips
-- Settings/preferences dialog
-- System integration (notifications, etc.)
-
----
-
-## [Unreleased]
-
-### Planned Features
-- GUI application with PySide6 (Stage 2)
-- Plugin system for additional formats
-- OCR support for scanned PDFs
-- Cloud storage integration
-- Conversion profiles/presets
-- More granular conversion options
-
----
-
 ## Version History
 
 ### Pre-release
@@ -174,4 +199,4 @@ Any relevant screenshots, logs, or file samples
 
 ---
 
-For more information, see [README.md](README.md)
+For more information, see the [project README](../README.md).

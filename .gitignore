@@ -1,4 +1,9 @@
 venv/
 .env
-changelog.md
-Change_Requirements.md
+/changelog.md
+docs/change-requirements.md
+.gigacode/
+.pytest_cache/
+.src/__pycache__/
+models.yaml
+docs/diagnostics/

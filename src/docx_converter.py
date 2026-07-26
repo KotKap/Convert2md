@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import logging
 import struct
+import tempfile
 from .converter_strategy import ConverterStrategy, ConversionMetadata
 
 logger = logging.getLogger(__name__)
@@ -290,15 +291,17 @@ class DOCXConverter(ConverterStrategy):
     def _convert_media_vectors(self, picture_dir: Path) -> None:
         """
         Convert vector media files (EMF, WMF) inside the pandoc media
-        directory to PNG using available system tools (ImageMagick or Inkscape).
+        directory to PNG using available system tools.
 
         Populates `self._media_converted_map` mapping original filenames
         to converted filenames (e.g., image4.emf -> image4.png).
         
         Strategy:
         1. Validate EMF file structure
-        2. Try Inkscape with timeout (safer fallback on timeout)
-        3. Fall back to ImageMagick if Inkscape fails
+        2. Try LibreOffice Draw (its EMF importer is isolated and does not
+           exhibit the Inkscape 1.4.x crashes seen on valid Office EMFs)
+        3. Try Inkscape with timeout
+        4. Fall back to ImageMagick
         """
         media_dir = picture_dir / 'media'
         if not media_dir.exists() or not media_dir.is_dir():
@@ -317,11 +320,19 @@ class DOCXConverter(ConverterStrategy):
             # Validate EMF file before attempting conversion
             if src.suffix.lower() == '.emf':
                 if not self._validate_emf_file(src):
-                    logger.warning(f"Invalid EMF file structure: {src.name}, skipping Inkscape")
-                    # Try ImageMagick directly
-                    if self._convert_with_imagemagick(src, dst):
+                    logger.warning("Invalid EMF file structure: %s, skipping Inkscape", src.name)
+                    if self._convert_with_libreoffice(src, dst) or self._convert_with_imagemagick(
+                        src, dst
+                    ):
                         converted_map[src.name] = dst.name
                     continue
+
+            # LibreOffice Draw safely handles the Office-generated EMFs that
+            # can terminate Inkscape 1.4.x with SIGSEGV.
+            if self._convert_with_libreoffice(src, dst):
+                converted_map[src.name] = dst.name
+                logger.debug("Converted %s with LibreOffice", src.name)
+                continue
 
             # Try Inkscape with timeout for better EMF/WMF rendering
             try:
@@ -360,6 +371,45 @@ class DOCXConverter(ConverterStrategy):
 
         if converted_map:
             self._media_converted_map = converted_map
+
+    def _convert_with_libreoffice(self, src: Path, dst: Path) -> bool:
+        """Convert one vector image through headless LibreOffice Draw."""
+        executable = shutil.which('soffice') or shutil.which('libreoffice')
+        if not executable:
+            return False
+
+        if dst.exists():
+            dst.unlink()
+        try:
+            with tempfile.TemporaryDirectory(prefix='convert2md-libreoffice-') as profile:
+                profile_uri = Path(profile).resolve().as_uri()
+                subprocess.run(
+                    [
+                        executable,
+                        f'-env:UserInstallation={profile_uri}',
+                        '--headless',
+                        '--convert-to',
+                        'png',
+                        '--outdir',
+                        str(dst.parent),
+                        str(src),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+            if self._validate_raster_output(dst):
+                return True
+            if dst.exists():
+                dst.unlink()
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            if dst.exists():
+                dst.unlink()
+        except Exception:
+            if dst.exists():
+                dst.unlink()
+        return False
 
     def _convert_with_imagemagick(self, src: Path, dst: Path) -> bool:
         """

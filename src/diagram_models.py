@@ -14,14 +14,14 @@ class ModelLimits:
     rpd: int
 
 
-# Limits are configuration defaults taken from Change_Requirements.md. They are
+# Limits are configuration defaults documented in docs/model-management.md. They are
 # intentionally isolated here because provider-side quotas can change.
 DEFAULT_MODELS = (
     ModelLimits("gemini-3.1-flash-lite", rpm=15, tpm=250_000, rpd=500),
-    ModelLimits("gemini-2.5-flash", rpm=5, tpm=250_000, rpd=20),
+    ModelLimits("gemini-3.5-flash-lite", rpm=10, tpm=250_000, rpd=100),
     ModelLimits("gemini-3.5-flash", rpm=5, tpm=250_000, rpd=20),
-    ModelLimits("gemini-2.5-flash-lite", rpm=10, tpm=250_000, rpd=20),
-    ModelLimits("gemini-3-flash", rpm=5, tpm=250_000, rpd=20),
+    ModelLimits("gemini-3.6-flash", rpm=5, tpm=250_000, rpd=20),
+    ModelLimits("gemini-3-flash-preview", rpm=5, tpm=250_000, rpd=20),
 )
 
 

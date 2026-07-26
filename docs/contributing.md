@@ -339,7 +339,7 @@ For maintainers:
 ## Questions?
 
 - Check existing issues and discussions
-- Review README and documentation
+- Review the [README](../README.md) and [documentation index](index.md)
 - Open a discussion issue if needed
 
 Thank you for contributing! 🎉

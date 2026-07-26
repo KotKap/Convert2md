@@ -4,7 +4,9 @@ CLI interface for document conversion.
 
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
 import os
+import subprocess
 import typer
 from rich.console import Console
 from rich.progress import Progress
@@ -13,6 +15,10 @@ from .converter import DocumentConverter
 from .diagram_converter import DiagramConversionError, GeminiDiagramProvider, ImageMermaidConverter
 from .diagram_models import BatchPlanner, DEFAULT_MODELS
 from .quota import QuotaLedger, RateLimiter
+from .model_management import (
+    RegisterUsageCommand, UsageQuery, create_model_management_api,
+    import_configuration, import_usage,
+)
 
 app = typer.Typer(
     name="Convert2MD",
@@ -22,9 +28,16 @@ app = typer.Typer(
 console = Console()
 
 
+def _state_dir() -> Path:
+    return Path(os.getenv("CONVERT2MD_STATE_DIR", Path.home() / ".convert2md"))
+
+
 def _quota_ledger() -> QuotaLedger:
-    state_dir = Path(os.getenv("CONVERT2MD_STATE_DIR", Path.home() / ".convert2md"))
-    return QuotaLedger(state_dir / "quota.sqlite3")
+    return QuotaLedger(_state_dir() / "quota.sqlite3")
+
+
+def _model_management():
+    return create_model_management_api(_state_dir())
 
 
 def _validate_model_name(model_name: str | None) -> None:
@@ -221,13 +234,123 @@ def batch(
 
 @app.command("models")
 def list_diagram_models() -> None:
-    """Show configured image-to-Mermaid models and locally known daily usage."""
+    """Show every model stored in the SQLite model repository."""
     ledger = _quota_ledger()
-    for model in DEFAULT_MODELS:
-        used = ledger.requests_today(model.name)
-        console.print(
-            f"{model.name}: {used}/{model.rpd} RPD, {model.rpm} RPM, {model.tpm} TPM"
+    models = _model_management().list_models(include_disabled=True)
+    console.print(f"[dim]Repository: {_state_dir() / 'model_management.sqlite3'}[/dim]")
+    if not models:
+        console.print("[yellow]The model repository is empty.[/yellow]")
+        return
+    for model in models:
+        used = ledger.requests_today(model.code)
+        quotas = ", ".join(
+            value for value in (
+                f"{model.rpm} RPM" if model.rpm is not None else "",
+                f"{model.tpm} TPM" if model.tpm is not None else "",
+                f"{model.rpd} RPD ({used} used today)" if model.rpd is not None else "",
+            ) if value
         )
+        console.print(
+            f"{model.id}: {model.status.value}, context {model.context_window}"
+            + (f", {quotas}" if quotas else "")
+        )
+
+
+@app.command("models-import")
+def import_models_config(
+    config_file: Path = typer.Argument(..., exists=True, dir_okay=False),
+) -> None:
+    """Import versioned model/provider/price/budget configuration from YAML or JSON."""
+    result = import_configuration(_model_management(), config_file)
+    console.print(
+        f"[green]Imported:[/green] {result.providers} providers, {result.models} models, "
+        f"{result.prices} prices, {result.budgets} budgets"
+    )
+
+
+@app.command("usage")
+def show_usage() -> None:
+    """Show locally recorded model usage and cost."""
+    summary = _model_management().get_usage_summary(UsageQuery())
+    console.print(
+        f"Requests: {summary.request_count}; input: {summary.input_tokens}; "
+        f"output: {summary.output_tokens}; cost: {summary.total_cost} {summary.currency}"
+    )
+
+
+@app.command("usage-record")
+def record_usage(
+    model_id: str = typer.Option(..., "--model", help="Full model ID, e.g. google:gemini-3.1-flash-lite"),
+    input_tokens: int = typer.Option(..., "--input-tokens", min=0),
+    output_tokens: int = typer.Option(0, "--output-tokens", min=0),
+    operation: str = typer.Option("historical", "--operation"),
+    cached_input_tokens: int = typer.Option(0, "--cached-input-tokens", min=0),
+    reasoning_tokens: int = typer.Option(0, "--reasoning-tokens", min=0),
+    image_count: int = typer.Option(0, "--images", min=0),
+    occurred_at: Optional[str] = typer.Option(
+        None, "--occurred-at", help="ISO 8601 timestamp; defaults to now",
+    ),
+    scope: str = typer.Option("application", "--scope"),
+    document_id: Optional[str] = typer.Option(None, "--document-id"),
+    status: str = typer.Option("success", "--status"),
+) -> None:
+    """Add one existing or externally made model request to usage accounting."""
+    timestamp = (
+        datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        if occurred_at else datetime.now(timezone.utc)
+    )
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    record = _model_management().register_usage(RegisterUsageCommand(
+        model_id=model_id, operation=operation, input_tokens=input_tokens,
+        output_tokens=output_tokens, cached_input_tokens=cached_input_tokens,
+        reasoning_tokens=reasoning_tokens, image_count=image_count, status=status,
+        occurred_at=timestamp, scope=scope, document_id=document_id,
+    ))
+    cost = f"{record.total_cost} {record.currency}" if record.total_cost is not None else "unknown"
+    console.print(f"[green]Usage recorded:[/green] {record.request_id}; cost: {cost}")
+
+
+@app.command("usage-import")
+def import_usage_history(
+    usage_file: Path = typer.Argument(..., exists=True, dir_okay=False),
+) -> None:
+    """Import historical usage from CSV, JSON or JSONL."""
+    count = import_usage(_model_management(), usage_file)
+    console.print(f"[green]Imported usage records:[/green] {count}")
+
+
+@app.command("web")
+def run_web(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port", min=1, max=65535),
+    ui_port: int = typer.Option(3000, "--ui-port", min=1, max=65535),
+) -> None:
+    """Run the local REST API and graphical interface together."""
+    try:
+        import uvicorn
+    except ImportError as error:
+        raise typer.BadParameter("Install web dependencies from requirements.txt") from error
+    web_dir = Path(__file__).resolve().parent.parent / "web"
+    if not (web_dir / "dist" / "server" / "index.js").exists():
+        raise typer.BadParameter("Build the interface first: cd web && npm install && npm run build")
+    frontend = subprocess.Popen(
+        ["npm", "run", "start", "--", "--port", str(ui_port)],
+        cwd=web_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    console.print(f"[green]Convert2MD web:[/green] http://127.0.0.1:{ui_port}")
+    console.print("[dim]Press Ctrl+C to stop the interface.[/dim]")
+    try:
+        uvicorn.run("src.web_api:create_web_app", host=host, port=port,
+                    reload=False, factory=True)
+    finally:
+        frontend.terminate()
+        try:
+            frontend.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            frontend.kill()
 
 
 @app.command("diagram")
@@ -242,7 +365,8 @@ def convert_diagram(
     excluded_models: set[str] = set()
     try:
         converter = ImageMermaidConverter(
-            GeminiDiagramProvider(), ledger, RateLimiter(ledger)
+            GeminiDiagramProvider(), ledger, RateLimiter(ledger),
+            model_management=_model_management(),
         )
     except DiagramConversionError as error:
         console.print(f"[red]Cannot start ({error.code}):[/red] {error}")
@@ -304,7 +428,8 @@ def convert_diagrams(
 
     try:
         converter = ImageMermaidConverter(
-            GeminiDiagramProvider(), ledger, RateLimiter(ledger)
+            GeminiDiagramProvider(), ledger, RateLimiter(ledger),
+            model_management=_model_management(),
         )
     except DiagramConversionError as error:
         console.print(f"[red]Cannot start ({error.code}):[/red] {error}")

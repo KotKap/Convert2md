@@ -6,6 +6,7 @@ from src.diagram_converter import (
     DiagramConversionError,
     DiagramResult,
     ImageMermaidConverter,
+    classify_provider_error,
     validate_mermaid,
 )
 from src.diagram_models import BatchPlanner, ModelLimits
@@ -53,10 +54,40 @@ def test_validate_mermaid_accepts_and_removes_fences():
     )
 
 
+def test_validate_mermaid_repairs_flowchart_body_without_root_directive():
+    source = "subgraph sales [Sales]\nA --> B\nend"
+    assert validate_mermaid(source) == f"flowchart TD\n{source}"
+
+
 def test_validate_mermaid_rejects_plain_text():
     with pytest.raises(DiagramConversionError) as error:
         validate_mermaid("This is not Mermaid")
     assert error.value.code == "invalid_mermaid"
+    assert error.value.retryable
+    assert error.value.response_excerpt == "This is not Mermaid"
+
+
+@pytest.mark.parametrize("source", [
+    "classDiagram\nclass A",
+    "requirementDiagram\nrequirement test { id: 1 }",
+    "block-beta\ncolumns 1\nA",
+    "sankey-beta\nA,B,1",
+    "C4Context\nPerson(user, User)",
+])
+def test_validate_mermaid_accepts_supported_diagram_families(source):
+    assert validate_mermaid(source) == source
+
+
+@pytest.mark.parametrize(("message", "code", "retryable"), [
+    ("404 NOT_FOUND: model is no longer available", "model_unavailable", False),
+    ("400 INVALID_ARGUMENT: malformed request", "invalid_request", False),
+    ("503 UNAVAILABLE: service overloaded", "provider_unavailable", True),
+    ("429 RESOURCE_EXHAUSTED: quota", "quota", True),
+])
+def test_provider_errors_are_classified_for_retry_policy(message, code, retryable):
+    error = classify_provider_error(RuntimeError(message))
+    assert error.code == code
+    assert error.retryable is retryable
 
 
 def test_image_converter_writes_same_name_atomically(tmp_path):
@@ -107,3 +138,37 @@ def test_image_converter_retries_temporary_errors_and_counts_attempts(tmp_path):
 
     assert provider.attempts == 2
     assert ledger.requests_today("fake") == 2
+
+
+def test_image_converter_normalizes_nullable_provider_usage(tmp_path):
+    image_path = tmp_path / "scheme.png"
+    image_path.write_bytes(b"fake")
+    ledger = QuotaLedger(tmp_path / "quota.sqlite3")
+
+    class Provider:
+        def convert(self, image_path, model):
+            return DiagramResult(
+                "flowchart", "flowchart TD\nA --> B", 42, 30, 12,
+                cached_input_tokens=None, reasoning_tokens=None,
+            )
+
+    class Limiter:
+        def wait(self, model, estimated_tokens):
+            pass
+
+    class Management:
+        command = None
+
+        def validate_request(self, request):
+            return type("Result", (), {"allowed": True, "errors": []})()
+
+        def register_usage(self, command):
+            self.command = command
+
+    management = Management()
+    ImageMermaidConverter(
+        Provider(), ledger, Limiter(), model_management=management
+    ).convert(image_path, ModelLimits("fake", 1, 10_000, 10))
+
+    assert management.command.cached_input_tokens == 0
+    assert management.command.reasoning_tokens == 0

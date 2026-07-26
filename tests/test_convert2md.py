@@ -303,6 +303,30 @@ class TestDOCXConverter:
 
         assert not DOCXConverter()._validate_emf_file(emf_path)
 
+    def test_prefers_libreoffice_before_inkscape_for_valid_emf(self, temp_dir, monkeypatch):
+        media_dir = temp_dir / "media"
+        media_dir.mkdir()
+        emf_path = media_dir / "image.emf"
+        header = bytearray(88)
+        struct.pack_into('<II', header, 0, 1, 88)
+        header[40:44] = b' EMF'
+        struct.pack_into('<I', header, 48, 88)
+        emf_path.write_bytes(header)
+
+        converter = DOCXConverter()
+        called = []
+
+        def fake_libreoffice(src, dst):
+            called.append(src.name)
+            return True
+
+        monkeypatch.setattr(converter, "_convert_with_libreoffice", fake_libreoffice)
+
+        converter._convert_media_vectors(temp_dir)
+
+        assert called == ["image.emf"]
+        assert converter._media_converted_map == {"image.emf": "image.png"}
+
     def test_pandoc_auto_download_when_missing(self, temp_dir, monkeypatch):
         """Test that missing Pandoc triggers an automatic download attempt."""
         input_path = temp_dir / "test.docx"
